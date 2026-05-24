@@ -129,10 +129,14 @@ log_success "$SHARED_BASHRC_FILE is ready (read-only for lab users)"
 install -m 755 "$MANAGE_SRC" "$INSTALL_PATH"
 log_success "Installed lab-manage to $INSTALL_PATH"
 
-if crontab -l 2>/dev/null | grep -Fq "$INSTALL_PATH sync"; then
+existing_cron="$(crontab -l 2>/dev/null || true)"
+if printf '%s\n' "$existing_cron" | grep -Fq "$INSTALL_PATH sync"; then
     log_info "Cron job already registered"
 else
-    (crontab -l 2>/dev/null; printf '%s\n' "$CRON_ENTRY") | crontab -
+    {
+        [[ -n "$existing_cron" ]] && printf '%s\n' "$existing_cron"
+        printf '%s\n' "$CRON_ENTRY"
+    } | crontab -
     log_success "Cron job registered (every 30 minutes)"
 fi
 
