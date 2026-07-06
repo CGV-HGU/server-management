@@ -102,6 +102,15 @@ ensure_groups() {
     ensure_group "$TEAMGROUP"
 }
 
+ensure_shared_dir() {
+    mkdir -p "$SHARED_DIR"
+    chmod 777 "$SHARED_DIR"
+
+    if [[ "${LAB_MANAGE_TEST_SKIP_ROOT:-0}" != "1" && $EUID -eq 0 ]]; then
+        chown root:root "$SHARED_DIR" 2>/dev/null || true
+    fi
+}
+
 ensure_metadata_storage() {
     mkdir -p "$TEAM_METADATA_DIR"
     chmod 700 "$TEAM_METADATA_DIR"
@@ -1472,31 +1481,37 @@ main() {
     case "$command" in
         add)
             ensure_groups
+            ensure_shared_dir
             ensure_metadata_storage
             cmd_add "$@"
             ;;
         update)
             ensure_groups
+            ensure_shared_dir
             ensure_metadata_storage
             cmd_update "$@"
             ;;
         remove)
             ensure_groups
+            ensure_shared_dir
             ensure_metadata_storage
             cmd_remove "$@"
             ;;
         list)
             ensure_groups
+            ensure_shared_dir
             ensure_metadata_storage
             cmd_list
             ;;
         refresh-bashrc)
             ensure_groups
+            ensure_shared_dir
             ensure_metadata_storage
             cmd_refresh_bashrc "$@"
             ;;
         sync)
             ensure_groups
+            ensure_shared_dir
             ensure_metadata_storage
             cmd_sync
             ;;

@@ -102,9 +102,9 @@ chmod 644 "$CONFIG_FILE"
 log_success "Wrote runtime config to $CONFIG_FILE"
 
 mkdir -p "$SHARED_DIR"
-chown "root:${LABGROUP}" "$SHARED_DIR" 2>/dev/null || true
-chmod 2777 "$SHARED_DIR"
-log_success "$SHARED_DIR is ready (mode 2777, group $LABGROUP)"
+chown root:root "$SHARED_DIR" 2>/dev/null || true
+chmod 777 "$SHARED_DIR"
+log_success "$SHARED_DIR is ready (mode 777, accessible to all users)"
 
 mkdir -p "$PRIVATE_DIR"
 chmod 755 "$PRIVATE_DIR"
