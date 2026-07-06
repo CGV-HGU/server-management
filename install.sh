@@ -102,8 +102,8 @@ chmod 644 "$CONFIG_FILE"
 log_success "Wrote runtime config to $CONFIG_FILE"
 
 mkdir -p "$SHARED_DIR"
-chown root:root "$SHARED_DIR" 2>/dev/null || true
-chmod 777 "$SHARED_DIR"
+chown -R root:root "$SHARED_DIR" 2>/dev/null || true
+chmod -R 777 "$SHARED_DIR"
 log_success "$SHARED_DIR is ready (mode 777, accessible to all users)"
 
 mkdir -p "$PRIVATE_DIR"
@@ -143,7 +143,7 @@ fi
 log_info "Installation complete!"
 log_info "  - ${LABGROUP} group: ready"
 log_info "  - ${TEAMGROUP} group: ready"
-log_info "  - ${SHARED_DIR}: ready (mode 2777)"
+log_info "  - ${SHARED_DIR}: ready (mode 777)"
 log_info "  - ${PRIVATE_DIR}: ready (mode 755)"
 log_info "  - ${CONFIG_FILE}: ready (mode 644)"
 log_info "  - ${SHARED_BASHRC_FILE}: ready (mode 644)"
