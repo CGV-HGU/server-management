@@ -15,6 +15,7 @@ RUNTIME_CONFIG_VARS=(
     LAB_MANAGE_METADATA_DIR
     LAB_MANAGE_TEAM_SOURCES_FILE
     LAB_MANAGE_SYNC_LOCK_DIR
+    LAB_MANAGE_DISABLED_DIR
 )
 RUNTIME_ENV_NAMES=()
 RUNTIME_ENV_VALUES=()
@@ -45,6 +46,7 @@ SHARED_BASHRC_FILE="${LAB_MANAGE_SHARED_BASHRC_FILE:-${LAB_MANAGE_BASHRC_DEFAULT
 TEAM_METADATA_DIR="${LAB_MANAGE_METADATA_DIR:-/etc/lab-manage}"
 TEAM_SOURCES_FILE="${LAB_MANAGE_TEAM_SOURCES_FILE:-${TEAM_METADATA_DIR}/team-sources}"
 SYNC_LOCK_DIR="${LAB_MANAGE_SYNC_LOCK_DIR:-${TEAM_METADATA_DIR}/sync.lock}"
+DISABLED_DIR="${LAB_MANAGE_DISABLED_DIR:-${TEAM_METADATA_DIR}/disabled}"
 BASHRC_MANAGED_BEGIN="# >>> lab-manage defaults >>>"
 BASHRC_MANAGED_END="# <<< lab-manage defaults <<<"
 
@@ -114,9 +116,12 @@ ensure_shared_dir() {
 ensure_metadata_storage() {
     mkdir -p "$TEAM_METADATA_DIR"
     chmod 700 "$TEAM_METADATA_DIR"
+    mkdir -p "$DISABLED_DIR"
+    chmod 700 "$DISABLED_DIR"
 
     if [[ "${LAB_MANAGE_TEST_SKIP_ROOT:-0}" != "1" && $EUID -eq 0 ]]; then
         chown root:root "$TEAM_METADATA_DIR"
+        chown root:root "$DISABLED_DIR"
     fi
 
     if [[ ! -f "$TEAM_SOURCES_FILE" ]]; then
@@ -128,6 +133,28 @@ ensure_metadata_storage() {
     if [[ "${LAB_MANAGE_TEST_SKIP_ROOT:-0}" != "1" && $EUID -eq 0 ]]; then
         chown root:root "$TEAM_SOURCES_FILE"
     fi
+}
+
+disabled_marker_file() {
+    printf '%s/%s\n' "$DISABLED_DIR" "$1"
+}
+
+account_disabled() {
+    local username="$1"
+    [[ -f "$(disabled_marker_file "$username")" ]]
+}
+
+remove_disabled_marker() {
+    local username="$1"
+    rm -f "$(disabled_marker_file "$username")"
+}
+
+account_is_managed() {
+    local username="$1"
+
+    team_account_has_metadata "$username" || \
+        (id "$username" &>/dev/null && user_in_group "$username" "$TEAMGROUP") || \
+        (id "$username" &>/dev/null && user_in_group "$username" "$LABGROUP")
 }
 
 username_normalize() {
@@ -470,6 +497,7 @@ rollback_team_account_creation() {
     fi
 
     cleanup_storage "$team_name"
+    remove_disabled_marker "$team_name"
 
     if id "$team_name" &>/dev/null; then
         if ! userdel -r "$team_name" &>/dev/null; then
@@ -550,6 +578,21 @@ write_authorized_keys() {
     mv -f "$temp_file" "$auth_file"
     chown -R "${username}:${username}" "$ssh_dir" 2>/dev/null || true
     return 0
+}
+
+set_account_expired() {
+    local username="$1"
+    local expired="$2"
+
+    if [[ "${LAB_MANAGE_TEST_SKIP_ROOT:-0}" == "1" ]]; then
+        return 0
+    fi
+
+    if [[ "$expired" == "1" ]]; then
+        usermod --expiredate 1 "$username"
+    else
+        usermod --expiredate "" "$username"
+    fi
 }
 
 create_system_user() {
@@ -650,6 +693,14 @@ Usage: lab-manage update --team <account> --from <user1,user2,...>
        lab-manage update --team <account> --add <user1,user2,...>
        lab-manage update --team <account> --remove <user1,user2,...>
 EOF
+}
+
+disable_usage() {
+    echo "Usage: lab-manage disable <username> [...]" >&2
+}
+
+enable_usage() {
+    echo "Usage: lab-manage enable <username> [...]" >&2
 }
 
 append_unique_user() {
@@ -938,6 +989,7 @@ remove_team_account() {
         log_error "Removed team account '$username' but failed to remove metadata from $TEAM_SOURCES_FILE"
         return 1
     fi
+    remove_disabled_marker "$username"
 
     release_state_lock
     disable_state_lock_trap
@@ -954,6 +1006,7 @@ remove_personal_user() {
     log_info "Removing user '$username'"
     cleanup_storage "$username"
     userdel -r "$username"
+    remove_disabled_marker "$username"
     log_success "User '$username' removed successfully"
 }
 
@@ -1002,7 +1055,11 @@ cmd_list() {
         echo "------------------"
         while IFS= read -r user; do
             [[ -z "$user" ]] && continue
-            echo "  - $user"
+            if account_disabled "$user"; then
+                echo "  - $user (disabled)"
+            else
+                echo "  - $user"
+            fi
         done <<< "$(printf '%s' "$personal_members" | tr ',' '\n')"
     fi
 
@@ -1020,7 +1077,11 @@ cmd_list() {
             printed_team_header=1
             found=1
         fi
-        echo "  - ${team_name} (sources: ${source_csv})"
+        if account_disabled "$team_name"; then
+            echo "  - ${team_name} (sources: ${source_csv}, disabled)"
+        else
+            echo "  - ${team_name} (sources: ${source_csv})"
+        fi
     done < "$TEAM_SOURCES_FILE"
 
     if [[ $found -eq 0 ]]; then
@@ -1080,6 +1141,172 @@ cmd_refresh_bashrc() {
     return "$had_error"
 }
 
+disable_account() {
+    local username="$1"
+    local normalized
+    local marker_file
+    local disabled_keys
+    local write_status
+
+    normalized=$(username_normalize "$username")
+    validate_username "$normalized" || return 1
+
+    if ! id "$normalized" &>/dev/null; then
+        log_error "User '$normalized' does not exist"
+        return 1
+    fi
+
+    if ! account_is_managed "$normalized"; then
+        log_error "User '$normalized' is not managed by lab-manage, refusing to disable"
+        return 1
+    fi
+
+    if account_disabled "$normalized"; then
+        log_warn "User '$normalized' is already disabled"
+        return 0
+    fi
+
+    disabled_keys="# lab-manage disabled: SSH login disabled for ${normalized}"$'\n'
+    if ! set_account_expired "$normalized" 1; then
+        log_error "Failed to expire account '$normalized'"
+        return 1
+    fi
+
+    set +e
+    write_authorized_keys "$normalized" "$disabled_keys" >/dev/null
+    write_status=$?
+    set -e
+    if [[ $write_status -ne 0 && $write_status -ne 10 ]]; then
+        set_account_expired "$normalized" 0 >/dev/null 2>&1 || true
+        log_error "Failed to disable SSH keys for '$normalized'"
+        return 1
+    fi
+
+    marker_file=$(disabled_marker_file "$normalized")
+    printf 'disabled\n' > "$marker_file"
+    chmod 600 "$marker_file"
+    if [[ "${LAB_MANAGE_TEST_SKIP_ROOT:-0}" != "1" && $EUID -eq 0 ]]; then
+        chown root:root "$marker_file" 2>/dev/null || true
+    fi
+
+    log_success "Disabled SSH login for '$normalized'"
+}
+
+enable_account() {
+    local username="$1"
+    local normalized
+    local source_csv
+    local keys
+    local valid_keys
+    local write_status
+
+    normalized=$(username_normalize "$username")
+    validate_username "$normalized" || return 1
+
+    if ! id "$normalized" &>/dev/null; then
+        log_error "User '$normalized' does not exist"
+        return 1
+    fi
+
+    if ! account_is_managed "$normalized"; then
+        log_error "User '$normalized' is not managed by lab-manage, refusing to enable"
+        return 1
+    fi
+
+    if ! account_disabled "$normalized"; then
+        log_warn "User '$normalized' is not disabled"
+        return 0
+    fi
+
+    if source_csv=$(team_sources_for_account "$normalized"); then
+        if ! valid_keys=$(merge_source_user_keys "$source_csv"); then
+            log_error "No valid GitHub SSH keys available for team account '$normalized'"
+            return 1
+        fi
+    else
+        if ! keys=$(fetch_github_keys "$normalized"); then
+            log_error "Could not fetch GitHub SSH keys for '$normalized'"
+            return 1
+        fi
+
+        if ! valid_keys=$(validate_ssh_keys "$keys"); then
+            log_error "No valid GitHub SSH keys found for '$normalized'"
+            return 1
+        fi
+    fi
+
+    set +e
+    write_authorized_keys "$normalized" "$valid_keys" >/dev/null
+    write_status=$?
+    set -e
+    if [[ $write_status -ne 0 && $write_status -ne 10 ]]; then
+        log_error "Failed to restore authorized_keys for '$normalized'"
+        return 1
+    fi
+
+    if ! set_account_expired "$normalized" 0; then
+        log_error "Failed to clear account expiration for '$normalized'"
+        return 1
+    fi
+
+    rm -f "$(disabled_marker_file "$normalized")"
+    log_success "Enabled SSH login for '$normalized'"
+}
+
+cmd_disable() {
+    local username
+    local had_error=0
+
+    if [[ $# -eq 0 ]]; then
+        log_error "No usernames provided"
+        disable_usage
+        return 1
+    fi
+
+    if ! acquire_state_lock; then
+        log_error "Could not acquire state lock"
+        return 1
+    fi
+    enable_state_lock_trap
+
+    for username in "$@"; do
+        if ! disable_account "$username"; then
+            had_error=1
+        fi
+    done
+
+    release_state_lock
+    disable_state_lock_trap
+    return "$had_error"
+}
+
+cmd_enable() {
+    local username
+    local had_error=0
+
+    if [[ $# -eq 0 ]]; then
+        log_error "No usernames provided"
+        enable_usage
+        return 1
+    fi
+
+    if ! acquire_state_lock; then
+        log_error "Could not acquire state lock"
+        return 1
+    fi
+    enable_state_lock_trap
+
+    for username in "$@"; do
+        if ! enable_account "$username"; then
+            had_error=1
+        fi
+    done
+
+    release_state_lock
+    disable_state_lock_trap
+    return "$had_error"
+}
+
 sync_personal_user() {
     local username="$1"
     local keys
@@ -1087,6 +1314,11 @@ sync_personal_user() {
     local write_status
 
     log_info "Syncing SSH keys for '$username'"
+
+    if account_disabled "$username"; then
+        log_info "Skipping disabled user '$username'"
+        return 0
+    fi
 
     if keys=$(fetch_github_keys "$username"); then
         if valid_keys=$(validate_ssh_keys "$keys"); then
@@ -1124,6 +1356,11 @@ sync_team_account() {
     if ! id "$team_name" &>/dev/null; then
         log_warn "Team account '$team_name' no longer exists"
         return 1
+    fi
+
+    if account_disabled "$team_name"; then
+        log_info "Skipping disabled team account '$team_name'"
+        return 0
     fi
 
     if ! merged_keys=$(merge_source_user_keys "$source_csv"); then
@@ -1444,6 +1681,8 @@ Commands:
                                           Add source users to team
   update --team <account> --remove <user1,user2>
                                           Remove source users from team
+  disable <username> [...]                Disable SSH login for managed accounts
+  enable <username> [...]                 Re-enable SSH login for managed accounts
   remove <username> [...]                 Remove managed lab or team accounts
   list                                    List all managed lab users and team accounts
   refresh-bashrc [username ...]           Add/update shared bashrc loader for managed users
@@ -1457,6 +1696,8 @@ Examples:
   lab-manage update --team projx --add charlie
   lab-manage update --team projx --remove alice
   lab-manage update --team projx --from alice,charlie
+  lab-manage disable student1
+  lab-manage enable student1
   lab-manage refresh-bashrc
   lab-manage remove student1
   lab-manage list
@@ -1496,6 +1737,16 @@ main() {
             ensure_shared_dir
             ensure_metadata_storage
             cmd_remove "$@"
+            ;;
+        disable)
+            ensure_groups
+            ensure_metadata_storage
+            cmd_disable "$@"
+            ;;
+        enable)
+            ensure_groups
+            ensure_metadata_storage
+            cmd_enable "$@"
             ;;
         list)
             ensure_groups

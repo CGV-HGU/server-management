@@ -44,6 +44,7 @@ By default, the scripts use:
 /etc/default/lab-manage      Runtime configuration written by install.sh
 /etc/lab-manage              lab-manage metadata directory
 /etc/lab-manage/team-sources Team account source-user metadata
+/etc/lab-manage/disabled     Disabled-account state markers
 /usr/local/bin/lab-manage    Installed command
 ```
 
@@ -237,6 +238,24 @@ Remove source users from a team account:
 sudo lab-manage update --team projx --remove alice
 ```
 
+Temporarily disable SSH login for managed accounts:
+
+```bash
+sudo lab-manage disable student1
+sudo lab-manage disable projx
+```
+
+This expires the Linux account, replaces the account's `authorized_keys` with a disabled marker, and records disabled state under `/etc/lab-manage/disabled`. Disabled accounts are skipped by `lab-manage sync`, so cron will not re-enable them accidentally.
+
+Re-enable SSH login for managed accounts:
+
+```bash
+sudo lab-manage enable student1
+sudo lab-manage enable projx
+```
+
+For personal accounts, keys are fetched again from the matching GitHub username. For team accounts, keys are rebuilt from the configured source users. The Linux account expiration is cleared after keys are restored.
+
 Refresh SSH keys immediately:
 
 ```bash
@@ -270,7 +289,7 @@ The installer registers automatic sync every 30 minutes. Manual sync is also ava
 sudo lab-manage sync
 ```
 
-If GitHub is temporarily unavailable or a user has no valid SSH keys, the script logs a warning. For team accounts, existing keys are kept when no valid replacement keys can be fetched.
+If GitHub is temporarily unavailable or a user has no valid SSH keys, the script logs a warning. For team accounts, existing keys are kept when no valid replacement keys can be fetched. Disabled accounts are skipped during sync.
 
 ## Configuration
 
@@ -306,6 +325,7 @@ LAB_MANAGE_SHARED_BASHRC_FILE
 LAB_MANAGE_METADATA_DIR
 LAB_MANAGE_TEAM_SOURCES_FILE
 LAB_MANAGE_SYNC_LOCK_DIR
+LAB_MANAGE_DISABLED_DIR
 LAB_MANAGE_SKIP_BASHRC_DEFAULTS
 ```
 
@@ -329,5 +349,6 @@ sudo LAB_MANAGE_SHARED_BASHRC_FILE=/data/config/lab_bashrc ./install.sh
 - `/data/shared` is configured as `2777`, which is intentionally permissive. Users may be able to remove or rename other users' files depending on the file permissions.
 - `install.sh` only changes the permissions of `/data/shared` itself, not every existing child file or directory under it.
 - `lab-manage` locks password login with `passwd -l`; SSH key login remains the intended login path.
+- `lab-manage disable` blocks new logins by expiring the Linux account and disabling managed `authorized_keys`; it does not terminate already-open sessions.
 - Usernames are normalized to lowercase and must be Linux-safe: `a-z`, `0-9`, `_`, `-`; no leading digit, no leading hyphen, no period, max 32 characters.
 - The `docker` group must exist before running `lab-manage` commands.
