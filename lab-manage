@@ -49,6 +49,7 @@ SYNC_LOCK_DIR="${LAB_MANAGE_SYNC_LOCK_DIR:-${TEAM_METADATA_DIR}/sync.lock}"
 DISABLED_DIR="${LAB_MANAGE_DISABLED_DIR:-${TEAM_METADATA_DIR}/disabled}"
 BASHRC_MANAGED_BEGIN="# >>> lab-manage defaults >>>"
 BASHRC_MANAGED_END="# <<< lab-manage defaults <<<"
+SHARED_DIR_ACL='u::rwx,g::rwx,m::rwx,o::rwx,d:u::rwx,d:g::rwx,d:m::rwx,d:o::rwx'
 
 log_info() {
     echo -e "\033[0;34m[INFO]\033[0m $*" >&2
@@ -106,7 +107,8 @@ ensure_groups() {
 
 ensure_shared_dir() {
     mkdir -p "$SHARED_DIR"
-    chmod 777 "$SHARED_DIR"
+    chmod 2777 "$SHARED_DIR"
+    setfacl -m "$SHARED_DIR_ACL" "$SHARED_DIR"
 
     if [[ "${LAB_MANAGE_TEST_SKIP_ROOT:-0}" != "1" && $EUID -eq 0 ]]; then
         chown root:root "$SHARED_DIR" 2>/dev/null || true

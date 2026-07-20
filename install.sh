@@ -16,6 +16,7 @@ CONFIG_DIR="${LAB_MANAGE_CONFIG_DIR:-${DATA_DIR}/config}"
 SHARED_BASHRC_FILE="${LAB_MANAGE_SHARED_BASHRC_FILE:-${LAB_MANAGE_BASHRC_DEFAULTS_FILE:-${CONFIG_DIR}/shared_bashrc}}"
 INSTALL_PATH="${LAB_MANAGE_INSTALL_PATH:-/usr/local/bin/lab-manage}"
 CRON_ENTRY="${LAB_MANAGE_CRON_ENTRY:-*/30 * * * * ${INSTALL_PATH} sync >/dev/null 2>&1}"
+SHARED_DIR_ACL='u::rwx,g::rwx,m::rwx,o::rwx,d:u::rwx,d:g::rwx,d:m::rwx,d:o::rwx'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANAGE_SRC="${SCRIPT_DIR}/lab-manage"
 
@@ -44,7 +45,7 @@ if [[ "${LAB_MANAGE_TEST_SKIP_ROOT:-0}" != "1" && $EUID -ne 0 ]]; then
     exit 1
 fi
 
-local_deps=("curl" "useradd" "userdel" "usermod" "passwd" "getent" "crontab" "groupadd" "install" "mountpoint")
+local_deps=("curl" "useradd" "userdel" "usermod" "passwd" "getent" "crontab" "groupadd" "install" "mountpoint" "find" "setfacl")
 for tool in "${local_deps[@]}"; do
     if ! command -v "$tool" &>/dev/null; then
         log_error "Required tool '$tool' not found"
@@ -76,6 +77,15 @@ if ! (mountpoint -q "$DATA_DIR" 2>/dev/null || [[ -d "$DATA_DIR" ]]); then
     exit 1
 fi
 
+repair_shared_tree() {
+    mkdir -p "$SHARED_DIR"
+    chown root:root "$SHARED_DIR" 2>/dev/null || true
+
+    find "$SHARED_DIR" -type d -exec chmod 2777 {} +
+    find "$SHARED_DIR" ! -type d ! -type l -exec chmod a+rw {} +
+    find "$SHARED_DIR" -type d -exec setfacl -m "$SHARED_DIR_ACL" {} +
+}
+
 config_file_dir="$(dirname "$CONFIG_FILE")"
 mkdir -p "$config_file_dir"
 {
@@ -101,10 +111,8 @@ chown root:root "$CONFIG_FILE" 2>/dev/null || true
 chmod 644 "$CONFIG_FILE"
 log_success "Wrote runtime config to $CONFIG_FILE"
 
-mkdir -p "$SHARED_DIR"
-chown -R root:root "$SHARED_DIR" 2>/dev/null || true
-chmod -R 777 "$SHARED_DIR"
-log_success "$SHARED_DIR is ready (mode 777, accessible to all users)"
+repair_shared_tree
+log_success "$SHARED_DIR is ready (directories 2777, inherited world read/write ACLs)"
 
 mkdir -p "$PRIVATE_DIR"
 chmod 755 "$PRIVATE_DIR"
@@ -143,7 +151,7 @@ fi
 log_info "Installation complete!"
 log_info "  - ${LABGROUP} group: ready"
 log_info "  - ${TEAMGROUP} group: ready"
-log_info "  - ${SHARED_DIR}: ready (mode 777)"
+log_info "  - ${SHARED_DIR}: ready (directories 2777, inherited world read/write ACLs)"
 log_info "  - ${PRIVATE_DIR}: ready (mode 755)"
 log_info "  - ${CONFIG_FILE}: ready (mode 644)"
 log_info "  - ${SHARED_BASHRC_FILE}: ready (mode 644)"
