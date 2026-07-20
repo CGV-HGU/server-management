@@ -62,9 +62,12 @@ Install dependencies on Ubuntu:
 
 ```bash
 sudo apt update
-sudo apt install -y curl passwd libc-bin cron coreutils util-linux
+sudo apt install -y acl curl passwd libc-bin cron coreutils findutils util-linux
 sudo systemctl enable --now cron
 ```
+
+The `acl` package provides `setfacl`, which is required to make shared
+permissions inherit to newly created files and directories.
 
 `lab-manage` requires the `docker` group. If Docker is already installed, this group usually exists. If Docker will be installed later but you want to prepare the server now:
 
@@ -96,7 +99,7 @@ sudo ./install.sh
 1. Checks required commands are available:
 
    ```text
-   curl useradd userdel usermod passwd getent crontab groupadd install mountpoint
+   curl useradd userdel usermod passwd getent crontab groupadd install mountpoint find setfacl
    ```
 
 2. Creates the lab groups if missing:
@@ -111,14 +114,28 @@ sudo ./install.sh
    - a real mount point, or
    - a normal directory.
 
-4. Creates and configures `/data/shared`:
+4. Creates and configures `/data/shared`, repairing the complete existing tree
+   each time the installer runs:
 
    ```bash
-   chown root:labusers /data/shared
-   chmod 2777 /data/shared
+   find /data/shared -type d -exec chmod 2777 {} +
+   find /data/shared ! -type d ! -type l -exec chmod a+rw {} +
+   find /data/shared -type d -exec setfacl -m \
+     'u::rwx,g::rwx,m::rwx,o::rwx,d:u::rwx,d:g::rwx,d:m::rwx,d:o::rwx' {} +
    ```
 
-   `2777` means everyone can read/write/enter the directory, and new files/directories inherit the `labusers` group because of the setgid bit.
+   All directories use `2777`: everyone can read, write, and enter them, while
+   setgid keeps group inheritance consistent. There is intentionally no sticky
+   bit, so users can rename or delete entries created by other users.
+
+   Existing non-directory entries gain read/write permission for everyone.
+   Existing executable bits are preserved, but normal data files are not made
+   executable.
+
+   Every directory also receives a default ACL. During normal creation, new
+   files inherit read/write access for everyone and new directories inherit
+   read/write/enter access for everyone, even when the creating user's usual
+   `umask` is restrictive.
 
 5. Creates and configures `/data/private`:
 
@@ -346,8 +363,10 @@ sudo LAB_MANAGE_SHARED_BASHRC_FILE=/data/config/lab_bashrc ./install.sh
 ## Notes and Cautions
 
 - These scripts perform root-level account and filesystem changes. Read the output before using them on a production server.
-- `/data/shared` is configured as `2777`, which is intentionally permissive. Users may be able to remove or rename other users' files depending on the file permissions.
-- `install.sh` only changes the permissions of `/data/shared` itself, not every existing child file or directory under it.
+- `/data/shared` is intentionally unrestricted: all local users can read and modify shared files and can remove or rename other users' entries.
+- Every `install.sh` run repairs permissions on all existing content under `/data/shared` and reapplies default ACLs to every directory. This can take time when the shared tree is very large.
+- A file owner or application can explicitly run `chmod` after creation and override inherited ACL permissions. Rerun `sudo ./install.sh` to repair such permission drift.
+- `/data/private/<username>` remains owner-only with mode `700`; the shared ACL policy is never applied under `/data/private`.
 - `lab-manage` locks password login with `passwd -l`; SSH key login remains the intended login path.
 - `lab-manage disable` blocks new logins by expiring the Linux account and disabling managed `authorized_keys`; it does not terminate already-open sessions.
 - Usernames are normalized to lowercase and must be Linux-safe: `a-z`, `0-9`, `_`, `-`; no leading digit, no leading hyphen, no period, max 32 characters.

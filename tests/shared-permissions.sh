@@ -36,6 +36,7 @@ STUB_DIR="$TEST_ROOT/stubs"
 CHMOD_LOG="$TEST_ROOT/chmod.log"
 ACL_LOG="$TEST_ROOT/setfacl.log"
 SHARED_ACL='u::rwx,g::rwx,m::rwx,o::rwx,d:u::rwx,d:g::rwx,d:m::rwx,d:o::rwx'
+REAL_SETFACL="$(command -v setfacl || true)"
 
 mkdir -p "$SHARED_DIR/nested/deeper" "$STUB_DIR" "$(dirname "$INSTALL_PATH")"
 printf 'plain\n' > "$SHARED_DIR/plain.txt"
@@ -67,7 +68,7 @@ chmod +x "$STUB_DIR/setfacl"
 : > "$CHMOD_LOG"
 : > "$ACL_LOG"
 
-LAB_MANAGE_REAL_SETFACL="$(command -v setfacl || true)" \
+LAB_MANAGE_REAL_SETFACL="$REAL_SETFACL" \
 LAB_MANAGE_TEST_CHMOD_LOG="$CHMOD_LOG" \
 LAB_MANAGE_TEST_ACL_LOG="$ACL_LOG" \
 LAB_MANAGE_TEST_SKIP_ROOT=1 \
@@ -88,7 +89,7 @@ assert_log_contains "$ACL_LOG" "$SHARED_DIR/nested"
 [[ ! -x "$SHARED_DIR/plain.txt" ]] || fail "Installer made a regular data file executable"
 [[ -x "$SHARED_DIR/executable.sh" ]] || fail "Installer removed an existing executable bit"
 
-if [[ -n "${LAB_MANAGE_REAL_SETFACL:-}" ]]; then
+if [[ -n "$REAL_SETFACL" ]]; then
     (
         umask 077
         printf 'new\n' > "$SHARED_DIR/new-file.txt"
@@ -110,7 +111,7 @@ fi
     export LAB_MANAGE_HOME_BASE_DIR="$TEST_ROOT/home"
     export LAB_MANAGE_TEST_CHMOD_LOG="$CHMOD_LOG"
     export LAB_MANAGE_TEST_ACL_LOG="$ACL_LOG"
-    export LAB_MANAGE_REAL_SETFACL="$(command -v setfacl || true)"
+    export LAB_MANAGE_REAL_SETFACL="$REAL_SETFACL"
     export PATH="$STUB_DIR:$PATH"
 
     # shellcheck source=../lab-manage
@@ -127,5 +128,10 @@ if grep -Fq -- "$SHARED_DIR/nested" "$ACL_LOG"; then
     fail "lab-manage recursively scanned the shared tree"
 fi
 [[ "$(file_mode "$PRIVATE_DIR/testuser")" == "700" ]] || fail "Private user directory is not mode 700"
+
+assert_log_contains "$REPO_ROOT/README.md" "sudo apt install -y acl "
+assert_log_contains "$REPO_ROOT/README.md" "default ACL"
+assert_log_contains "$REPO_ROOT/README.md" "repairs permissions on all existing content"
+assert_log_contains "$REPO_ROOT/README.md" 'mode `700`'
 
 echo "PASS: shared and private permission policies"
