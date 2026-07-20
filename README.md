@@ -118,15 +118,19 @@ sudo ./install.sh
    each time the installer runs:
 
    ```bash
+   find /data/shared ! -type l -exec setfacl -b {} +
+   find /data/shared -type d -exec setfacl -k {} +
    find /data/shared -type d -exec chmod 2777 {} +
    find /data/shared ! -type d ! -type l -exec chmod a+rw {} +
    find /data/shared -type d -exec setfacl -m \
      'u::rwx,g::rwx,m::rwx,o::rwx,d:u::rwx,d:g::rwx,d:m::rwx,d:o::rwx' {} +
    ```
 
-   All directories use `2777`: everyone can read, write, and enter them, while
-   setgid keeps group inheritance consistent. There is intentionally no sticky
-   bit, so users can rename or delete entries created by other users.
+   Existing named access and default ACL entries are removed first so stale
+   per-user restrictions cannot survive a repair. All directories then use
+   `2777`: everyone can read, write, and enter them, while setgid keeps group
+   inheritance consistent. There is intentionally no sticky bit, so users can
+   rename or delete entries created by other users.
 
    Existing non-directory entries gain read/write permission for everyone.
    Existing executable bits are preserved, but normal data files are not made

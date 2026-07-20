@@ -81,6 +81,8 @@ repair_shared_tree() {
     mkdir -p "$SHARED_DIR"
     chown root:root "$SHARED_DIR" 2>/dev/null || true
 
+    find "$SHARED_DIR" ! -type l -exec setfacl -b {} +
+    find "$SHARED_DIR" -type d -exec setfacl -k {} +
     find "$SHARED_DIR" -type d -exec chmod 2777 {} +
     find "$SHARED_DIR" ! -type d ! -type l -exec chmod a+rw {} +
     find "$SHARED_DIR" -type d -exec setfacl -m "$SHARED_DIR_ACL" {} +

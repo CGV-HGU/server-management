@@ -112,6 +112,8 @@ ensure_shared_dir() {
         chown root:root "$SHARED_DIR" 2>/dev/null || true
     fi
 
+    setfacl -b "$SHARED_DIR"
+    setfacl -k "$SHARED_DIR"
     chmod 2777 "$SHARED_DIR"
     setfacl -m "$SHARED_DIR_ACL" "$SHARED_DIR"
 }

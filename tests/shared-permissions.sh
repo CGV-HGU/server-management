@@ -37,12 +37,18 @@ CHMOD_LOG="$TEST_ROOT/chmod.log"
 ACL_LOG="$TEST_ROOT/setfacl.log"
 SHARED_ACL='u::rwx,g::rwx,m::rwx,o::rwx,d:u::rwx,d:g::rwx,d:m::rwx,d:o::rwx'
 REAL_SETFACL="$(command -v setfacl || true)"
+REAL_GETFACL="$(command -v getfacl || true)"
 
 mkdir -p "$SHARED_DIR/nested/deeper" "$STUB_DIR" "$(dirname "$INSTALL_PATH")"
 printf 'plain\n' > "$SHARED_DIR/plain.txt"
 printf '#!/bin/sh\n' > "$SHARED_DIR/executable.sh"
 chmod 600 "$SHARED_DIR/plain.txt"
 chmod 700 "$SHARED_DIR/executable.sh"
+
+if [[ -n "$REAL_SETFACL" ]]; then
+    "$REAL_SETFACL" -m u:12345:--- "$SHARED_DIR/plain.txt"
+    "$REAL_SETFACL" -m d:u:12345:--- "$SHARED_DIR/nested"
+fi
 
 for command_name in useradd userdel usermod passwd getent crontab groupadd mountpoint; do
     printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB_DIR/$command_name"
@@ -82,6 +88,8 @@ assert_log_contains "$CHMOD_LOG" "2777"
 assert_log_contains "$CHMOD_LOG" "$SHARED_DIR/nested"
 assert_log_contains "$CHMOD_LOG" "a+rw"
 assert_log_contains "$CHMOD_LOG" "$SHARED_DIR/plain.txt"
+assert_log_contains "$ACL_LOG" "-b"
+assert_log_contains "$ACL_LOG" "-k"
 assert_log_contains "$ACL_LOG" "$SHARED_ACL"
 assert_log_contains "$ACL_LOG" "$SHARED_DIR"
 assert_log_contains "$ACL_LOG" "$SHARED_DIR/nested"
@@ -90,6 +98,14 @@ assert_log_contains "$ACL_LOG" "$SHARED_DIR/nested"
 [[ -x "$SHARED_DIR/executable.sh" ]] || fail "Installer removed an existing executable bit"
 
 if [[ -n "$REAL_SETFACL" ]]; then
+    [[ -n "$REAL_GETFACL" ]] || fail "setfacl is installed but getfacl is unavailable"
+    if "$REAL_GETFACL" -cp "$SHARED_DIR/plain.txt" | grep -Fq 'user:12345:'; then
+        fail "Installer kept a restrictive named access ACL"
+    fi
+    if "$REAL_GETFACL" -cp "$SHARED_DIR/nested" | grep -Fq 'default:user:12345:'; then
+        fail "Installer kept a restrictive named default ACL"
+    fi
+
     (
         umask 077
         printf 'new\n' > "$SHARED_DIR/new-file.txt"
@@ -134,4 +150,9 @@ assert_log_contains "$REPO_ROOT/README.md" "default ACL"
 assert_log_contains "$REPO_ROOT/README.md" "repairs permissions on all existing content"
 assert_log_contains "$REPO_ROOT/README.md" 'mode `700`'
 
-echo "PASS: shared and private permission policies"
+if [[ -n "$REAL_SETFACL" ]]; then
+    echo "PASS: shared and private permission policies, including real ACL inheritance"
+else
+    echo "PASS: permission command policy"
+    echo "SKIP: real ACL inheritance (setfacl is unavailable on this host)"
+fi

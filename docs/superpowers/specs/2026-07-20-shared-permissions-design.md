@@ -11,6 +11,8 @@ remains accessible only to its owner.
 
 The installer applies a POSIX ACL policy to the complete shared tree.
 
+- Existing named access ACLs and named default ACLs are removed so stale
+  per-user restrictions cannot take precedence over the open policy.
 - Existing directories receive mode `2777`. The setgid bit keeps group
   inheritance consistent, while the absence of the sticky bit allows users to
   delete or rename each other's entries.
